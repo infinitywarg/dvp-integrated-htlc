@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-contract DVP {
+contract SimpleDVP {
     enum Status {
         PENDING,
         SETTLED,
@@ -16,7 +16,6 @@ contract DVP {
         uint256 assetAmount;
         uint256 cashAmount;
         bytes32 hashlock;
-        uint256 timelock;
         bytes32 secret;
         Status status;
     }
@@ -47,16 +46,7 @@ contract DVP {
     ) public returns (bytes32 id) {
         require(assetAmount != 0 && cashAmount != 0, "zero amount");
 
-        Instruction memory i = Instruction(
-            msg.sender,
-            buyer,
-            assetAmount,
-            cashAmount,
-            hashlock,
-            timelock,
-            0x00,
-            Status.PENDING
-        );
+        Instruction memory i = Instruction(msg.sender, buyer, assetAmount, cashAmount, hashlock, 0x00, Status.PENDING);
         id = keccak256(abi.encode(i));
         require(instruction[id].seller == address(0), "settlement id exists");
         require(timelock > block.timestamp, "timelock must be in future");
@@ -67,39 +57,36 @@ contract DVP {
         }
     }
 
-    function executeSettlement(bytes32 id, bytes32 secret) public returns (bool success) {
+    function executeSettlement(bytes32 id, bytes32 secret) external {
         Instruction memory i = instruction[id];
         require(i.seller != address(0), "settlement id doesnt exist");
         require(i.hashlock == keccak256(abi.encode(secret)), "hashlock invalid");
         require(i.buyer == msg.sender, "sender not buyer");
         require(i.status == Status.PENDING, "settlement not pending");
-        require(i.timelock > block.timestamp, "timelock expired");
+
         i.secret = secret;
         i.status = Status.SETTLED;
         instruction[id] = i;
         emit InstructionSettled(id, i.seller, i.buyer);
         if (!IERC20(cash).transferFrom(msg.sender, i.seller, i.cashAmount)) {
-            revert("asset transfer failed");
+            revert("cash transfer failed");
         }
         if (!IERC20(asset).transfer(msg.sender, i.assetAmount)) {
             revert("asset transfer failed");
         }
-
-        success = true;
     }
 
-    function abortSettlement(bytes32 id) public returns (bool success) {
+    function abortSettlement(bytes32 id) external {
         Instruction memory i = instruction[id];
         require(i.seller != address(0), "settlement id doesnt exist");
         require(i.seller == msg.sender, "sender not seller");
         require(i.status != Status.SETTLED && i.status != Status.ABORTED, "already settled or aborted");
-        require(i.timelock <= block.timestamp, "timelock not expired");
+
         i.status = Status.ABORTED;
         instruction[id] = i;
         emit InstructionSettled(id, i.seller, i.buyer);
         if (!IERC20(asset).transfer(msg.sender, i.assetAmount)) {
             revert("asset transfer failed");
         }
-        success = true;
     }
 }
