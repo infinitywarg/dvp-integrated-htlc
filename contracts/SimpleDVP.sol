@@ -41,19 +41,18 @@ contract SimpleDVP {
         address buyer,
         uint256 assetAmount,
         uint256 cashAmount,
-        bytes32 hashlock,
-        uint256 timelock
+        bytes32 hashlock
     ) public returns (bytes32 id) {
         require(assetAmount != 0 && cashAmount != 0, "zero amount");
-
+        // create settlement instruction
         Instruction memory i = Instruction(msg.sender, buyer, assetAmount, cashAmount, hashlock, 0x00, Status.PENDING);
         id = keccak256(abi.encode(i));
         require(instruction[id].seller == address(0), "settlement id exists");
-        require(timelock > block.timestamp, "timelock must be in future");
         instruction[id] = i;
         emit InstructionCreated(id, i.seller, buyer);
+        // deposit asset tokens into this contract
         if (!IERC20(asset).transferFrom(msg.sender, address(this), assetAmount)) {
-            revert("asset transfer failed");
+            revert("asset deposit failed");
         }
     }
 
@@ -63,16 +62,22 @@ contract SimpleDVP {
         require(i.hashlock == keccak256(abi.encode(secret)), "hashlock invalid");
         require(i.buyer == msg.sender, "sender not buyer");
         require(i.status == Status.PENDING, "settlement not pending");
-
+        // update settlement instruction
         i.secret = secret;
         i.status = Status.SETTLED;
         instruction[id] = i;
         emit InstructionSettled(id, i.seller, i.buyer);
-        if (!IERC20(cash).transferFrom(msg.sender, i.seller, i.cashAmount)) {
-            revert("cash transfer failed");
+        // deposit cash tokens into this contract
+        if (!IERC20(cash).transferFrom(msg.sender, address(this), i.cashAmount)) {
+            revert("cash deposit failed");
+        }
+
+        // execute delivery vs payment transfers
+        if (!IERC20(cash).transfer(i.seller, i.cashAmount)) {
+            revert("DvP cash transfer to seller failed");
         }
         if (!IERC20(asset).transfer(msg.sender, i.assetAmount)) {
-            revert("asset transfer failed");
+            revert("DvP asset transfer to buyer failed");
         }
     }
 
